@@ -1,6 +1,6 @@
 require('dotenv').config(); // Load env variables
 const express = require('express');
-const { MongoClient, ServerApiVersion } = require('mongodb');
+const { MongoClient, ServerApiVersion, ObjectId } = require('mongodb');
 const cors = require('cors');
 
 const app = express();
@@ -28,7 +28,11 @@ async function run() {
         const db = client.db('Digital-Life-Lesson')
         const userConnection = db.collection('users')
 
-        
+        // user related api 
+        app.get('/users', async (req, res) => {
+            const users = await userConnection.find().toArray();
+            res.send(users);
+        })
 
         // Get user role by email
         app.get('/users/role/:email', async (req, res) => {
@@ -57,6 +61,33 @@ async function run() {
             const result = await userConnection.insertOne(user)
             res.send(result)
         })
+
+        // Promote user to admin
+        app.patch('/users/admin/:id', async (req, res) => {
+            const { id } = req.params;
+
+            try {
+                const result = await userConnection.updateOne(
+                    { _id: new ObjectId(id) },
+                    { $set: { role: 'admin' } }
+                );
+                res.send(result);
+            } catch (err) {
+                res.status(500).send({ error: 'Failed to update role' });
+            }
+        });
+
+        // Delete user 
+        app.delete('/users/:id', async (req, res) => {
+            const { id } = req.params;
+            try {
+                const result = await userConnection.deleteOne({ _id: new ObjectId(id) });
+                res.send(result);
+            } catch (err) {
+                res.status(500).send({ error: 'Failed to delete user' });
+            }
+        });
+
 
 
         await client.db("admin").command({ ping: 1 });
