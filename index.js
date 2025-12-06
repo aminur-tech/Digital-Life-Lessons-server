@@ -15,31 +15,65 @@ const uri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASS}@cluster
 
 // MongoClient setup
 const client = new MongoClient(uri, {
-  serverApi: {
-    version: ServerApiVersion.v1,
-    strict: true,
-    deprecationErrors: true,
-  }
+    serverApi: {
+        version: ServerApiVersion.v1,
+        strict: true,
+        deprecationErrors: true,
+    }
 });
 
 async function run() {
-  try {
-    await client.connect();
-    await client.db("admin").command({ ping: 1 });
-    console.log("Pinged your deployment. You successfully connected to MongoDB!");
-  } catch (err) {
-    console.error(err);
-  }
+    try {
+        await client.connect();
+        const db = client.db('Digital-Life-Lesson')
+        const userConnection = db.collection('users')
+
+        
+
+        // Get user role by email
+        app.get('/users/role/:email', async (req, res) => {
+            const email = req.params.email;
+            const user = await userConnection.findOne({ email: email });
+
+            if (!user) {
+                return res.send({ role: null });
+            }
+            res.send({ role: user.role });
+        });
+
+
+        app.post('/users', async (req, res) => {
+            const user = req.body;
+            user.role = 'user'
+            user.createAt = new Date()
+
+            // already user || check social sign in
+            const email = user.email
+            const userExits = await userConnection.findOne({ email: email })
+            if (userExits) {
+                return res.send({ message: 'user exits' })
+            }
+
+            const result = await userConnection.insertOne(user)
+            res.send(result)
+        })
+
+
+        await client.db("admin").command({ ping: 1 });
+        console.log("Pinged your deployment. You successfully connected to MongoDB!");
+    } catch (err) {
+        console.error(err);
+    }
 }
 
 run().catch(console.dir);
 
 // Routes
 app.get('/', (req, res) => {
-  res.send('Hello World!');
+    res.send('Hello World!');
 });
 
 // Start server
 app.listen(port, () => {
-  console.log(`Server listening on port ${port}`);
+    console.log(`Server listening on port ${port}`);
 });
