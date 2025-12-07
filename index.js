@@ -30,7 +30,7 @@ async function run() {
     const db = client.db('Digital-Life-Lesson')
     const userConnection = db.collection('users')
     const lessonsCollection = db.collection('lessons')
-    
+
 
 
     // user related api 
@@ -106,11 +106,79 @@ async function run() {
     });
 
     // lesson related api 
+    // GET lessons by user email
+    app.get('/lessons/my/:email', async (req, res) => {
+      const { email } = req.params; // <-- get from params
+      try {
+        const lessons = await lessonsCollection.find({ email }).toArray(); // <-- author field
+        res.send(lessons);
+      } catch (err) {
+        res.status(500).send({ error: 'Failed to fetch lessons' });
+      }
+    });
+
+
+
     app.post("/lessons", async (req, res) => {
       const lesson = req.body;
       const result = await lessonsCollection.insertOne(lesson);
       res.send({ success: true, lessonId: result.insertedId });
     });
+
+    app.patch('/lessons/:id', async (req, res) => {
+      const { id } = req.params;
+      const { title, description, visibility, access, userId } = req.body; // explicitly pick allowed fields
+
+      try {
+        const lesson = await lessonsCollection.findOne({ _id: new ObjectId(id) });
+        if (!lesson) return res.status(404).send({ error: 'Lesson not found' });
+
+        // If user is changing access to Premium, verify user subscription
+        if (access === 'premium') {
+          const user = await userConnection.findOne({ _id: new ObjectId(userId) });
+          if (!user?.isPremium) {
+            return res.status(403).send({ error: 'Only Premium users can set Premium access' });
+          }
+        }
+
+        // Update only allowed fields
+        const updates = {
+          ...(title && { title }),
+          ...(description && { description }),
+          ...(visibility && { visibility }),
+          ...(access && { access }),
+        };
+
+        await lessonsCollection.updateOne(
+          { _id: new ObjectId(id) },
+          { $set: updates }
+        );
+
+        res.send({ success: true });
+      } catch (err) {
+        console.error(err);
+        res.status(500).send({ error: 'Failed to update lesson' });
+      }
+    });
+
+
+    app.delete('/lessons/:id/:userId', async (req, res) => {
+      const { id, userId } = req.params;
+
+      try {
+        const lesson = await lessonsCollection.findOne({ _id: new ObjectId(id) });
+        if (!lesson) return res.status(404).send({ error: 'Lesson not found' });
+
+        await lessonsCollection.deleteOne({ _id: new ObjectId(id) });
+        res.send({ success: true });
+      } catch (err) {
+        res.status(500).send({ error: 'Failed to delete lesson' });
+      }
+    });
+
+
+
+
 
 
     // payment related api 
