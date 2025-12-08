@@ -58,7 +58,7 @@ async function run() {
     const userConnection = db.collection('users')
     const lessonsCollection = db.collection('lessons')
 
-     // verify with more database access with admin
+    // verify with more database access with admin
     const verifyAdmin = async (req, res, next) => {
       const email = req.decoded_email
       const query = { email }
@@ -75,12 +75,17 @@ async function run() {
       res.send(users);
     })
 
+    app.get("/users/:email", async (req, res) => {
+        const email = req.params.email;
+        const user = await userConnection.findOne({ email });
+        res.send(user); 
+    });
+
+
     app.get('/users/premium/:id', async (req, res) => {
       const { id } = req.params;
       try {
         const user = await userConnection.findOne({ _id: new ObjectId(id) });
-        if (!user) return res.status(404).send({ error: "User not found" });
-
         res.send(user);
       } catch (err) {
         res.status(500).send({ error: "Failed to fetch user" });
@@ -158,6 +163,45 @@ async function run() {
 
 
     // lesson related api 
+    // public lesson 
+    // Get public and private lessons for browsing
+    app.get("/lessons/public", async (req, res) => {
+      try {
+        const allLessons = await lessonsCollection
+          .find({})
+          .sort({ createdAt: -1 })
+          .toArray();
+
+        // Map lessons to send minimal info for private lessons if requester is not creator
+        const filteredLessons = allLessons.map((lesson) => {
+          if (lesson.privacy === "Private") {
+            // Remove sensitive fields for non-creator view (frontend will handle blur)
+            return {
+              _id: lesson._id,
+              title: lesson.title,
+              description: lesson.description.slice(0, 80), // preview only
+              category: lesson.category,
+              emotionalTone: lesson.emotionalTone,
+              tone: lesson.tone,
+              creatorName: lesson.creatorName,
+              creatorPhoto: lesson.creatorPhoto || lesson.image,
+              email: lesson.email,
+              privacy: lesson.privacy,
+              accessLevel: lesson.accessLevel,
+              createdAt: lesson.createdAt,
+            };
+          }
+          return lesson;
+        });
+
+        res.send(filteredLessons);
+      } catch (error) {
+        console.error(error);
+        res.status(500).send({ message: "Failed to load lessons" });
+      }
+    });
+
+
     // GET lessons by user email
     app.get('/lessons/my/:email', async (req, res) => {
       const { email } = req.params; // <-- get from params
@@ -248,7 +292,7 @@ async function run() {
         mode: 'payment',
         customer_email: email,
         metadata: { userId },
-        
+
         success_url: `${process.env.SITE_DOMAIN}/dashboard/payment-success?session_id={CHECKOUT_SESSION_ID}`,
         cancel_url: `${process.env.SITE_DOMAIN}/dashboard/payment-cancel`
       });
@@ -264,23 +308,26 @@ async function run() {
         if (!sessionId) return res.status(400).send({ error: "Missing session_id" });
 
         const session = await stripe.checkout.sessions.retrieve(sessionId);
-
+        console.log(session)
         if (session.payment_status === "paid") {
-          const userId = session.metadata.userId;
+          const email = session.customer_email
           const transactionData = {
             id: session.payment_intent,
             amount: session.amount_total / 100,
             currency: session.currency,
             paidAt: new Date(),
           };
+          // console.log(session.customer_email)
+          // console.log(session.customer_details)
 
           // Update user properly
-          await userConnection.updateOne(
-            { _id: new ObjectId(userId) }, // filter
+          const user = await userConnection.updateOne(
+            { email }, // filter
             { $set: { isPremium: true, premiumAt: new Date(), transaction: transactionData } }
           );
+          console.log(user, email)
 
-          const updatedUser = await userConnection.findOne({ _id: new ObjectId(userId) });
+          const updatedUser = await userConnection.findOne({ email });
 
           return res.send({
             transaction: transactionData,
