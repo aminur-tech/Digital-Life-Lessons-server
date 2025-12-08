@@ -75,23 +75,22 @@ async function run() {
       res.send(users);
     })
 
-    app.get("/users/:email", async (req, res) => {
+    // Get premium status by email
+    app.get("/users/premium/:email", async (req, res) => {
+      try {
         const email = req.params.email;
         const user = await userConnection.findOne({ email });
-        res.send(user); 
-    });
 
+        if (!user) {
+          return res.send({ isPremium: false });
+        }
 
-    app.get('/users/premium/:id', async (req, res) => {
-      const { id } = req.params;
-      try {
-        const user = await userConnection.findOne({ _id: new ObjectId(id) });
-        res.send(user);
+        res.send({ isPremium: user.isPremium === true });
       } catch (err) {
-        res.status(500).send({ error: "Failed to fetch user" });
+        console.error(err);
+        res.status(500).send({ error: "Failed to fetch premium status" });
       }
     });
-
 
     // Get user role by email
     app.get('/users/role/:email', async (req, res) => {
@@ -127,44 +126,30 @@ async function run() {
     // Toggle user role between 'user' and 'admin'
     app.patch('/users/role/:id', async (req, res) => {
       const { id } = req.params;
+      // Find current user
+      const user = await userConnection.findOne({ _id: new ObjectId(id) });
+      // Toggle role
+      const newRole = user.role === 'admin' ? 'user' : 'admin';
 
-      try {
-        // Find current user
-        const user = await userConnection.findOne({ _id: new ObjectId(id) });
-        if (!user) {
-          return res.status(404).send({ error: 'User not found' });
-        }
+      const result = await userConnection.updateOne(
+        { _id: new ObjectId(id) },
+        { $set: { role: newRole } }
+      );
 
-        // Toggle role
-        const newRole = user.role === 'admin' ? 'user' : 'admin';
+      res.send({ message: `User role updated to ${newRole}`, result });
 
-        const result = await userConnection.updateOne(
-          { _id: new ObjectId(id) },
-          { $set: { role: newRole } }
-        );
-
-        res.send({ message: `User role updated to ${newRole}`, result });
-      } catch (err) {
-        console.error(err);
-        res.status(500).send({ error: 'Failed to update role' });
-      }
     });
 
     // Delete user 
     app.delete('/users/:id', async (req, res) => {
       const { id } = req.params;
-      try {
-        const result = await userConnection.deleteOne({ _id: new ObjectId(id) });
-        res.send(result);
-      } catch (err) {
-        res.status(500).send({ error: 'Failed to delete user' });
-      }
+      const result = await userConnection.deleteOne({ _id: new ObjectId(id) });
+      res.send(result);
     });
 
 
     // lesson related api 
     // public lesson 
-    // Get public and private lessons for browsing
     app.get("/lessons/public", async (req, res) => {
       try {
         const allLessons = await lessonsCollection
