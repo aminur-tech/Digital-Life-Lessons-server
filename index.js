@@ -1,9 +1,17 @@
-// Load env variables
 const express = require('express');
 const { MongoClient, ServerApiVersion, ObjectId } = require('mongodb');
 const cors = require('cors');
 require('dotenv').config();
 const stripe = require('stripe')(process.env.STRIPE_API_KEY)
+
+const admin = require("firebase-admin");
+const { count } = require('console');
+const decoded = Buffer.from(process.env.FB_SERVICE_KEY, 'base64').toString('utf8')
+const serviceAccount = JSON.parse(decoded);
+
+admin.initializeApp({
+  credential: admin.credential.cert(serviceAccount)
+});
 
 const app = express();
 const port = process.env.PORT || 3000;
@@ -11,6 +19,25 @@ const port = process.env.PORT || 3000;
 // Middlewares
 app.use(express.json());
 app.use(cors());
+
+const verifyFBToken = async (req, res, next) => {
+  // console.log('verify', req.headers.authorization)
+  const token = req.headers.authorization
+  if (!token) {
+    return res.status(401).send({ message: 'unAuthorized access' })
+  }
+  try {
+    const idToken = token.split(' ')[1]
+    const decoded = await admin.auth().verifyIdToken(idToken)
+    console.log('decode in the token', decoded)
+    req.decoded_email = decoded.email
+    next()
+  }
+  catch (err) {
+    return res.status(401).send({ message: 'unauthorized access' })
+
+  }
+}
 
 // MongoDB URI
 const uri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASS}@cluster0.f47fo9z.mongodb.net/?appName=Cluster0`;
@@ -31,13 +58,35 @@ async function run() {
     const userConnection = db.collection('users')
     const lessonsCollection = db.collection('lessons')
 
-
+     // verify with more database access with admin
+    const verifyAdmin = async (req, res, next) => {
+      const email = req.decoded_email
+      const query = { email }
+      const user = await userConnection.findOne(query)
+      if (!user || user.role !== 'admin') {
+        return res.status(403).send({ message: 'forbidden access' })
+      }
+      next()
+    }
 
     // user related api 
     app.get('/users', async (req, res) => {
       const users = await userConnection.find().toArray();
       res.send(users);
     })
+
+    app.get('/users/premium/:id', async (req, res) => {
+      const { id } = req.params;
+      try {
+        const user = await userConnection.findOne({ _id: new ObjectId(id) });
+        if (!user) return res.status(404).send({ error: "User not found" });
+
+        res.send(user);
+      } catch (err) {
+        res.status(500).send({ error: "Failed to fetch user" });
+      }
+    });
+
 
     // Get user role by email
     app.get('/users/role/:email', async (req, res) => {
@@ -55,7 +104,9 @@ async function run() {
       const user = req.body;
       user.role = 'user'
       user.createAt = new Date()
-
+      user.isPremium = false;
+      user.premiumAt = null;
+      user.transaction = null;
       // already user || check social sign in
       const email = user.email
       const userExits = await userConnection.findOne({ email: email })
@@ -105,6 +156,7 @@ async function run() {
       }
     });
 
+
     // lesson related api 
     // GET lessons by user email
     app.get('/lessons/my/:email', async (req, res) => {
@@ -127,7 +179,7 @@ async function run() {
 
     app.patch('/lessons/:id', async (req, res) => {
       const { id } = req.params;
-      const { title, description, visibility, access, userId } = req.body; // explicitly pick allowed fields
+      const { title, description, visibility, access, userId } = req.body;
 
       try {
         const lesson = await lessonsCollection.findOne({ _id: new ObjectId(id) });
@@ -177,10 +229,6 @@ async function run() {
     });
 
 
-
-
-
-
     // payment related api 
     app.post('/create-checkout-session', async (req, res) => {
       const { userId, email } = req.body;
@@ -200,6 +248,7 @@ async function run() {
         mode: 'payment',
         customer_email: email,
         metadata: { userId },
+        
         success_url: `${process.env.SITE_DOMAIN}/dashboard/payment-success?session_id={CHECKOUT_SESSION_ID}`,
         cancel_url: `${process.env.SITE_DOMAIN}/dashboard/payment-cancel`
       });
@@ -207,42 +256,44 @@ async function run() {
       res.send({ url: session.url });
     });
 
-    app.patch('/payment-success', async (req, res) => {
-      const sessionId = req.query.session_id;
 
-      const session = await stripe.checkout.sessions.retrieve(sessionId);
-      // console.log(session)
+    app.get('/payment-success', async (req, res) => {
+      try {
+        const sessionId = req.query.session_id;
 
-      if (session.payment_status === "paid") {
-        const userId = session.metadata.userId;
+        if (!sessionId) return res.status(400).send({ error: "Missing session_id" });
 
-        const transactionData = {
-          id: session.payment_intent,
-          amount: session.amount_total / 100,
-          currency: session.currency,
-          paidAt: new Date(),
-        };
+        const session = await stripe.checkout.sessions.retrieve(sessionId);
 
-        await usersCollection.updateOne(
-          { _id: new ObjectId(userId) },
-          {
-            $set: {
-              isPremium: true,
-              premiumAt: new Date(),
-              transaction: transactionData,
-            },
-          }
-        );
+        if (session.payment_status === "paid") {
+          const userId = session.metadata.userId;
+          const transactionData = {
+            id: session.payment_intent,
+            amount: session.amount_total / 100,
+            currency: session.currency,
+            paidAt: new Date(),
+          };
 
-        // RETURN UPDATED USER
-        const updatedUser = await usersCollection.findOne({ _id: new ObjectId(userId) });
+          // Update user properly
+          await userConnection.updateOne(
+            { _id: new ObjectId(userId) }, // filter
+            { $set: { isPremium: true, premiumAt: new Date(), transaction: transactionData } }
+          );
 
-        return res.send(updatedUser);
+          const updatedUser = await userConnection.findOne({ _id: new ObjectId(userId) });
+
+          return res.send({
+            transaction: transactionData,
+            user: updatedUser
+          });
+        }
+
+        res.send({ message: "Payment incomplete" });
+      } catch (err) {
+        console.error("Payment success error:", err);
+        res.status(500).send({ error: "Internal server error" });
       }
-
-      res.send({ message: "Payment incomplete" });
     });
-
 
 
     await client.db("admin").command({ ping: 1 });
