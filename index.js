@@ -153,34 +153,11 @@ async function run() {
     // public lesson 
     app.get("/lessons/public", async (req, res) => {
       try {
-        const allLessons = await lessonsCollection
-          .find({})
+        const Lessons = await lessonsCollection.find({ privacy: "Public"})
           .sort({ createdAt: -1 })
           .toArray();
 
-        // Map lessons to send minimal info for private lessons if requester is not creator
-        const filteredLessons = allLessons.map((lesson) => {
-          if (lesson.privacy === "Private") {
-            // Remove sensitive fields for non-creator view (frontend will handle blur)
-            return {
-              _id: lesson._id,
-              title: lesson.title,
-              description: lesson.description.slice(0, 80), // preview only
-              category: lesson.category,
-              emotionalTone: lesson.emotionalTone,
-              tone: lesson.tone,
-              creatorName: lesson.creatorName,
-              creatorPhoto: lesson.creatorPhoto || lesson.image,
-              email: lesson.email,
-              privacy: lesson.privacy,
-              accessLevel: lesson.accessLevel,
-              createdAt: lesson.createdAt,
-            };
-          }
-          return lesson;
-        });
-
-        res.send(filteredLessons);
+        res.send(Lessons);
       } catch (error) {
         console.error(error);
         res.status(500).send({ message: "Failed to load lessons" });
