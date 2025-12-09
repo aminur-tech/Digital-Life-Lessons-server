@@ -6,6 +6,7 @@ const stripe = require('stripe')(process.env.STRIPE_API_KEY)
 
 const admin = require("firebase-admin");
 const { count } = require('console');
+const { features } = require('process');
 const decoded = Buffer.from(process.env.FB_SERVICE_KEY, 'base64').toString('utf8')
 const serviceAccount = JSON.parse(decoded);
 
@@ -198,54 +199,76 @@ async function run() {
       }
     });
 
-
-
-    app.post("/lessons", async (req, res) => {
-      const lesson = req.body;
-      const result = await lessonsCollection.insertOne(lesson);
-      res.send({ success: true, lessonId: result.insertedId });
-    });
-
-    app.patch('/lessons/:id', async (req, res) => {
-      const { id } = req.params;
-      const { title, description, visibility, access, userId } = req.body;
-
+    //  home pages feature
+    app.get("/lessons/featured", async (req, res) => {
       try {
-        const lesson = await lessonsCollection.findOne({ _id: new ObjectId(id) });
-        if (!lesson) return res.status(404).send({ error: 'Lesson not found' });
+        const featured = await lessonsCollection
+          .find({ featured: true })
+          .sort({ createdAt: -1 })
+          .limit(8)
+          .toArray();
 
-        // If user is changing access to Premium, verify user subscription
-        if (access === 'premium') {
-          const user = await userConnection.findOne({ _id: new ObjectId(userId) });
-          if (!user?.isPremium) {
-            return res.status(403).send({ error: 'Only Premium users can set Premium access' });
-          }
-        }
-
-        // Update only allowed fields
-        const updates = {
-          ...(title && { title }),
-          ...(description && { description }),
-          ...(visibility && { visibility }),
-          ...(access && { access }),
-        };
-
-        await lessonsCollection.updateOne(
-          { _id: new ObjectId(id) },
-          { $set: updates }
-        );
-
-        res.send({ success: true });
-      } catch (err) {
-        console.error(err);
-        res.status(500).send({ error: 'Failed to update lesson' });
+        res.send(featured);
+      } catch (error) {
+        console.error(error);
+        res.status(500).send({ message: "Failed to load featured lessons" });
       }
     });
 
 
+
+    // add lesson 
+    app.post("/lessons", async (req, res) => {
+      const lesson = req.body;
+      lesson.featured = false;
+      const result = await lessonsCollection.insertOne(lesson);
+      res.send({ success: true, lessonId: result.insertedId });
+    });
+
+    // featured update admin manage lesson
+    app.patch("/lessons/feature/:id", async (req, res) => {
+      const { id } = req.params;
+      const { featured } = req.body;
+
+      try {
+        const result = await lessonsCollection.updateOne(
+          { _id: new ObjectId(id) },
+          { $set: { featured } }
+        );
+
+        res.send({ success: true });
+      } catch (err) {
+        res.status(500).send({ error: "Failed to update featured" });
+      }
+    });
+
+
+    // update lesson from manage lesson
+    app.patch('/lessons/:id', async (req, res) => {
+      const { id } = req.params;
+      const { title, description, visibility, access } = req.body;
+
+      const lesson = await lessonsCollection.findOne({ _id: new ObjectId(id) })
+
+      // Update only allowed fields
+      const updates = {
+        ...(title && { title }),
+        ...(description && { description }),
+        ...(visibility && { visibility }),
+        ...(access && { access }),
+      };
+
+      await lessonsCollection.updateOne(
+        { _id: new ObjectId(id) },
+        { $set: updates }
+      );
+
+      res.send({ success: true })
+    });
+
+    // delete from manage lesson pages
     app.delete('/lessons/:id/:userId', async (req, res) => {
       const { id, userId } = req.params;
-
       try {
         const lesson = await lessonsCollection.findOne({ _id: new ObjectId(id) });
         if (!lesson) return res.status(404).send({ error: 'Lesson not found' });
@@ -256,6 +279,8 @@ async function run() {
         res.status(500).send({ error: 'Failed to delete lesson' });
       }
     });
+
+
 
 
     // payment related api 
