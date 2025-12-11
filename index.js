@@ -127,6 +127,33 @@ async function run() {
       res.send(result)
     })
 
+    // update photo 
+    app.patch("/users/update-photo", verifyFBToken, async (req, res) => {
+      const email = req.decoded_email;
+      const { photoURL } = req.body;
+
+      await userConnection.updateOne(
+        { email },
+        { $set: { image: photoURL } }
+      );
+
+      res.send({ success: true });
+    });
+
+    // update name 
+    app.patch("/users/update-name", verifyFBToken, async (req, res) => {
+      const email = req.decoded_email;
+      const { name } = req.body;
+
+      const result = await userConnection.updateOne(
+        { email },
+        { $set: { name } }
+      );
+
+      res.send({ success: true });
+    });
+
+
 
     // Toggle user role between 'user' and 'admin'
     app.patch('/users/role/:id', async (req, res) => {
@@ -200,20 +227,8 @@ async function run() {
     app.get("/lessons/:id", async (req, res) => {
       try {
         const id = req.params.id;
-
-        const lesson = await lessonsCollection.findOne({ _id: new ObjectId(id) });
-        if (!lesson) return res.status(404).send({ message: "Lesson not found" });
-
-        const author = await userConnection.findOne({ email: lesson.email });
-
-        res.send({
-          ...lesson,
-          author: {
-            name: author?.author_Name,
-            email: author?.email,
-            profileImage: author?.image,
-          }
-        });
+        const lesson = await lessonsCollection.findOne({ _id: new ObjectId(id) })
+        res.send(lesson);
       } catch (err) {
         res.status(500).send({ error: "Failed to load lesson" });
       }
@@ -226,7 +241,7 @@ async function run() {
       res.send(result);
     });
 
-   
+
 
     // favorite  post
     app.post("/favorites/toggle", verifyFBToken, async (req, res) => {
@@ -262,20 +277,36 @@ async function run() {
       }
     });
 
+    // Get author profile + their lessons + favorites count
+    app.get("/author/:email", async (req, res) => {
+      const email = req.params.email;
 
+      try {
+        // 1. Get user info
+        const user = await userConnection.findOne(
+          { email },
+          { projection: { password: 0 } } // hide sensitive info
+        );
 
+        if (!user) return res.status(404).send({ message: "Author not found" });
 
-    // get comment
-    app.get("/comments/:lessonId", async (req, res) => {
-      const lessonId = req.params.lessonId;
+        // 2. Get all lessons by author
+        const lessons = await lessonsCollection.find({ email }).sort({ createdAt: -1 }).toArray();
 
-      const comments = await commentsCollection
-        .find({ lessonId })
-        .sort({ createdAt: -1 })
-        .toArray();
+        // 3. Get total favorites count for this author
+        const favoritesCount = await favoritesCollection.countDocuments({ userEmail: email });
 
-      res.send(comments);
+        res.send({
+          user,
+          lessons,
+          favoritesCount
+        });
+      } catch (err) {
+        console.error(err);
+        res.status(500).send({ error: "Failed to fetch author profile" });
+      }
     });
+
 
 
     // smiler lessons
@@ -301,7 +332,14 @@ async function run() {
 
 
 
-    // report lesson
+    // report lesson related api
+    app.get("/reported-lessons", verifyFBToken, verifyAdmin, async (req, res) => {
+      const reports = await lessonReportsCollection.find().sort({ createdAt: -1 })
+        .toArray();
+      // console.log(reports)
+      res.send(reports);
+    });
+
     app.post("/lessons/report", verifyFBToken, async (req, res) => {
       try {
         const { lessonId, reason, details, author_Name, author_Email, reporter, author_Img } = req.body;
@@ -369,6 +407,25 @@ async function run() {
       res.send(result);
     });
 
+    app.post("/comments/like", verifyFBToken, async (req, res) => {
+      const { commentId, isReply } = req.body;
+      const userId = req.body.userId || req.decoded_email; // fallback to email if needed
+
+      if (!commentId || !userId) return res.status(400).send({ error: "Missing commentId or userId" });
+
+      const comment = await commentsCollection.findOne({ _id: new ObjectId(commentId) });
+      if (!comment) return res.status(404).send({ error: "Comment not found" });
+
+      const liked = comment.likes.includes(userId);
+      const update = liked
+        ? { $pull: { likes: userId } }
+        : { $addToSet: { likes: userId } };
+
+      await commentsCollection.updateOne({ _id: new ObjectId(commentId) }, update);
+      res.send({ liked: !liked });
+    });
+
+
 
     app.patch("/comments/like/:id", verifyFBToken, async (req, res) => {
       const commentId = req.params.id;
@@ -397,9 +454,6 @@ async function run() {
       await commentsCollection.deleteOne({ _id: new ObjectId(commentId) });
       res.send({ success: true });
     });
-
-
-
 
 
 
