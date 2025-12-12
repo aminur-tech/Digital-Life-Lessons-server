@@ -223,6 +223,88 @@ async function run() {
       }
     });
 
+    // Top Contributors
+    app.get("/top-contributors", async (req, res) => {
+      try {
+        // Get date one week ago
+        const oneWeekAgo = new Date();
+        oneWeekAgo.setDate(oneWeekAgo.getDate() - 7);
+
+        // Fetch all lessons
+        const lessonsAll = await lessonsCollection.find().toArray();
+
+        // Filter lessons from last 7 days (convert string to Date if needed)
+        const lessons = lessonsAll.filter(lesson => {
+          const createdAt = new Date(lesson.createdAt);
+          return createdAt >= oneWeekAgo;
+        });
+
+        // Group by author email
+        const map = {};
+
+        lessons.forEach(item => {
+          if (!map[item.email]) {
+            map[item.email] = {
+              email: item.email,
+              name: item.author_Name || item.email.split("@")[0],
+              image: item.author_Img || "/default-avatar.png",
+              totalLessons: 0
+            };
+          }
+          map[item.email].totalLessons++;
+        });
+
+        // Convert to array and sort by most lessons
+        const result = Object.values(map).sort((a, b) => b.totalLessons - a.totalLessons);
+
+        // Limit top 5 contributors
+        const topContributors = result.slice(0, 5);
+
+        res.send(topContributors);
+
+      } catch (err) {
+        console.error("Error fetching top contributors:", err);
+        res.status(500).send({ error: "Failed to load contributors" });
+      }
+    });
+
+
+
+    // Most Favorite Lessons
+    app.get("/most-favorite-lessons", async (req, res) => {
+      try {
+        const favorites = await favoritesCollection.find().toArray();
+        const group = {};
+
+        favorites.forEach(item => {
+          if (!group[item.lessonId]) {
+            group[item.lessonId] = {
+              lessonId: item.lessonId,
+              totalFavorites: 0,
+              image: item.lessonImage,
+              title: item.lessonTitle,
+              description: item.lessonDescription,
+              category: item.category
+            };
+          }
+
+          group[item.lessonId].totalFavorites++;
+        });
+
+        const result = Object.values(group);
+
+        result.sort((a, b) => b.totalFavorites - a.totalFavorites);
+
+        const topLessons = result.slice(0, 8);
+
+        res.send(topLessons);
+      } catch (err) {
+        res.status(500).send({ error: "Failed to load favorite lessons" });
+      }
+    });
+
+
+
     // lesson for lessons details 
     app.get("/lessons/:id", async (req, res) => {
       try {
